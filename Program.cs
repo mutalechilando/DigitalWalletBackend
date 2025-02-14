@@ -17,9 +17,23 @@ if (string.IsNullOrEmpty(connectionString))
 builder.Services.AddDbContext<WalletDbContext>(options =>
     options.UseSqlServer(connectionString));
 
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend",
+        policy =>
+        {
+            policy.WithOrigins("http://localhost:5173") // Allow frontend URL
+                  .AllowAnyMethod()  // Allow GET, POST, PUT, DELETE, etc.
+                  .AllowAnyHeader()  // Allow all headers
+                  .AllowCredentials(); // Allow cookies & authentication headers
+        });
+});
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -34,6 +48,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 var app = builder.Build();
+app.UseCors("AllowFrontend");
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseHttpsRedirection();

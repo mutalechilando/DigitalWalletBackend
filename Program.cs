@@ -1,4 +1,5 @@
 using DigitalWalletBackend.Data;
+using DigitalWalletBackend.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -21,7 +22,7 @@ builder.Services.AddDbContext<WalletDbContext>(options =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-
+builder.Services.AddScoped<TokenValidationService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend",

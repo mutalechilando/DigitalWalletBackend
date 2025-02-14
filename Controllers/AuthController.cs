@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using BCrypt.Net;
 using DigitalWalletBackend.DTOs;
 using Microsoft.AspNetCore.Authorization;
+using DigitalWalletBackend.Services;
 
 namespace DigitalWalletBackend.Controllers
 {
@@ -18,11 +19,13 @@ namespace DigitalWalletBackend.Controllers
     {
         private readonly WalletDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly TokenValidationService _tokenValidationService;
 
-        public AuthController(WalletDbContext context, IConfiguration configuration)
+        public AuthController(WalletDbContext context, IConfiguration configuration, TokenValidationService tokenValidationService)
         {
             _context = context;
             _configuration = configuration;
+            _tokenValidationService = tokenValidationService;
         }
 
         [AllowAnonymous]
@@ -77,5 +80,54 @@ namespace DigitalWalletBackend.Controllers
             var token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
         }
+
+        [Authorize]
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            var token = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
+
+            if (string.IsNullOrEmpty(token))
+            {
+                return BadRequest(new { message = "Token is required" });
+            }
+
+            if (!_tokenValidationService.ValidateToken(token, out var claimsPrincipal))
+            {
+                return Unauthorized(new { message = "Invalid token" });
+            }
+
+            var expiryDate = claimsPrincipal.Claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Exp)?.Value;
+            if (expiryDate == null)
+            {
+                return Unauthorized(new { message = "Invalid token" });
+            }
+
+            var expirationTime = DateTimeOffset.FromUnixTimeSeconds(long.Parse(expiryDate)).UtcDateTime;
+
+            if (expirationTime < DateTime.UtcNow)
+            {
+                return Unauthorized(new { message = "Token already expired" });
+            }
+
+            var isBlacklisted = await _context.BlacklistedTokens.AnyAsync(bt => bt.Token == token);
+            if (isBlacklisted)
+            {
+                return Unauthorized(new { message = "Token is already revoked" });
+            }
+
+            _context.BlacklistedTokens.Add(new BlacklistedToken
+            {
+                Token = token,
+                ExpiryDate = expirationTime
+            });
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Logged out successfully" });
+        }
+
+
     }
+
 }

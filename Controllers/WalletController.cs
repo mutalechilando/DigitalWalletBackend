@@ -20,6 +20,24 @@ namespace DigitalWalletBackend.Controllers
             _context = context;
         }
 
+        [HttpGet("me")]
+        public async Task<IActionResult> GetCurrentUser()
+        {
+            int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier));
+
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+            {
+                return NotFound("User not found.");
+            }
+
+            return Ok(new
+            {
+                Username = user.UserName,
+                Email = user.Email
+            });
+        }
+
         [HttpGet("balance")]
         public async Task<IActionResult> GetBalance()
         {
@@ -37,19 +55,22 @@ namespace DigitalWalletBackend.Controllers
         {
             int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier));
 
-            if (transfer.ReceiverId == userId)
-                return BadRequest(new { message = "You cannot transfer money to yourself." });
+            //if (transfer.ReceiverId == userId)
+            //return BadRequest(new { message = "You cannot transfer money to yourself." });
 
             var senderWallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserId == userId);
-            var receiverWallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserId == transfer.ReceiverId);
+            var receiver = await _context.Users.FirstOrDefaultAsync(u => u.Email == transfer.Receiver || u.UserName == transfer.Receiver);
 
-            if (senderWallet == null || receiverWallet == null)
-                return NotFound(new { message = "One or both wallets not found." });
+            if (senderWallet == null || receiver == null)
+                return NotFound(new { message = "Sender or receiver not found." });
+
+            var receiverWallet = await _context.Wallets.FirstOrDefaultAsync(w => w.UserId == receiver.Id);
+            if (receiverWallet == null)
+                return NotFound(new { message = "Receiver wallet not found." });
 
             if (senderWallet.Balance < transfer.Amount)
                 return BadRequest(new { message = "Insufficient balance." });
 
-            // Use a transaction to ensure atomic updates
             using (var dbTransaction = await _context.Database.BeginTransactionAsync())
             {
                 try
@@ -60,7 +81,7 @@ namespace DigitalWalletBackend.Controllers
                     var transaction = new Models.Transaction
                     {
                         SenderId = userId,
-                        ReceiverId = transfer.ReceiverId,
+                        ReceiverId = receiver.Id,
                         Amount = transfer.Amount,
                         Timestamp = DateTime.UtcNow
                     };
@@ -83,19 +104,36 @@ namespace DigitalWalletBackend.Controllers
         public async Task<IActionResult> GetTransactionHistory()
         {
             int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier));
+
             var transactions = await _context.Transactions
                 .Where(t => t.SenderId == userId || t.ReceiverId == userId)
                 .OrderByDescending(t => t.Timestamp)
                 .ToListAsync();
 
-            return Ok(transactions.Select(t => new
+            var userIds = transactions.SelectMany(t => new[] { t.SenderId, t.ReceiverId }).Distinct();
+            var userMap = await _context.Users
+                .Where(u => userIds.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => new { u.UserName, u.Email });
+
+            var result = transactions.Select(t => new
             {
                 TransactionId = t.Id,
                 Amount = t.Amount,
                 Timestamp = t.Timestamp,
                 Type = t.SenderId == userId ? "Sent" : "Received",
-                OtherParty = t.SenderId == userId ? t.ReceiverId : t.SenderId
-            }));
+                OtherPartyUsername = t.SenderId == t.ReceiverId
+                    ? "Self"
+                    : (userMap.ContainsKey(t.SenderId) && userMap.ContainsKey(t.ReceiverId)
+                        ? (t.SenderId == userId ? userMap[t.ReceiverId].UserName : userMap[t.SenderId].UserName)
+                        : "Self"),
+                OtherPartyEmail = t.SenderId == t.ReceiverId
+                    ? "Own Wallet"
+                    : (userMap.ContainsKey(t.SenderId) && userMap.ContainsKey(t.ReceiverId)
+                        ? (t.SenderId == userId ? userMap[t.ReceiverId].Email : userMap[t.SenderId].Email)
+                        : "Self")
+            });
+
+            return Ok(result);
         }
 
         [HttpPost("deposit")]

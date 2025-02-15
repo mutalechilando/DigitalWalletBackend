@@ -35,6 +35,11 @@ namespace DigitalWalletBackend.Controllers
             if (await _context.Users.AnyAsync(u => u.Email == user.Email))
                 return BadRequest("Email already exists");
 
+            if (await _context.Users.AnyAsync(u => u.UserName == user.UserName))
+            {
+                return BadRequest(new { message = "Username is already taken" });
+            }
+
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(user.PasswordHash);
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
@@ -59,7 +64,12 @@ namespace DigitalWalletBackend.Controllers
             }
 
             var token = GenerateJwtToken(user);
-            return Ok(new { token });
+            return Ok(new
+            {
+                token = token,
+                user = new { user.UserName, user.Email }
+            });
+
         }
 
         private string GenerateJwtToken(User user)
